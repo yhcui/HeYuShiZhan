@@ -4,6 +4,5 @@ pragma solidity ^0.8.0;
 interface IUniswapV2Factory {
     // 创建交易对
     function createPair(address tokenA, address tokenB) external returns (address pair);
-
     
 }
