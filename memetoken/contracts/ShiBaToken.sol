@@ -78,7 +78,11 @@ contract ShiBaToken is ERC20, Ownable {
     //黑名单
     mapping(address => bool) public isBlacklisted;
 
+    //铸造
     EVENT MINTEVENT(address indexed to, uint256 amount);
+
+    //启用禁用交易
+    EVENT ENABLETRADINGEVENT(address indexed add,bool enable);
 
 
     constructor(address _marketingWallet,
@@ -145,6 +149,106 @@ contract ShiBaToken is ERC20, Ownable {
 
     }
 
+    function handeSwapAndLiquify() external onlyOwner {
+        // 交换及添加流动性逻辑
+        uint256 balance = balanceOf(address(this));
+        require(balance > 0, "no token");
+        _swapAndLiquify(balance);
+    }
+
+    function _swapAndLiquify(uint256 amount) internal { 
+        require(amount > 0, "no token");
+        // uint256 totalFee = taxRate.buyTax + taxRate.sellTax + taxRate.transferTax;
+        uint256 totalAllot = taxAllot.liquidity + taxAllot.marketing + taxAllot.burn;
+        require(totalAllot > 0, "no allot");
+        // uint256 liquidityTokens = amount * taxAllot.liquidity / totalAllot / 2;
+        uint256 liquidityTokens = amount.mul(taxAllot.liquidity).div(totalAllot).div(2);
+
+        uint256 marketingTokens = amount.mul(taxAllot.marketing).div(totalAllot);
+
+        uint256 burnTokens = amount.mul(taxAllot.burn).div(totalAllot);
+
+        if (burnTokens > 0) {
+            super._transfer(address(this), burnAddress, burnTokens);
+        }
+
+        uint256 swapTokens = amount.sub(liquidity).sub(burnTokens)
+
+        uint256 ethbalanceBefore = address(this).balance;
+
+        _swapTokensForEth(swapTokens);
+
+        uint256 deltaBalance = address(this).balance.sub(ethbalanceBefore);
+
+        // eth分配给营销和流动性
+        uint256 liquidityEth = deltaBalance.mul(taxAllot.liquidity).div(totalAllot.sub(taxAllot.burn)).div(2);
+        uint256 marketingEth = deltaBalance.sub(liquidityEth);
+
+
+        if (liquidityEth > 0 && liquidityTokens > 0) {
+            // 添加流动性
+            _addLiquidity(liquidityTokens, liquidityEth);
+        }
+        if (marketingEth > 0) {
+            payable(marketingWallet).transfer(marketingEth);
+        }
+
+    }
+
+    function _swapTokensForEth(uint256 tokenAmount) private {
+        address[] memory path = new address[](2);
+        path[0] = address(this);
+        path[1] = uniswapV2Router.WETH();
+        _approve(address(this), address(uniswapV2Router), tokenAmount);
+        // 会给msg.sender 转eth
+        uniswapV2Router.swapExactTokensForETHSupportingFeeOnTransferTokens(
+            tokenAmount,
+            0, // accept any amount of ETH
+            path,
+            address(this),
+            block.timestamp
+        );
+    }
+
+    function _addLiquidity(uint256 tokenAmount, uint256 ethAmount) private {
+
+        _approve(address(this), address(uniswapV2Router), tokenAmount);
+
+        uniswapV2Router.addLiquidityETH{value: ethAmount}(
+            address(this),
+            tokenAmount,
+            0, // slippage is unavoidable
+            0, // slippage is unavoidable
+            liquidityWallet,
+            block.timestamp
+        );
+
+    }
+   //  提取合约地址中意外或错误发送的其他 ERC-20 代币。
+    function emergencyWithdrawToken(address tokenAddress) external onlyOwner { 
+        require(tokenAddress != addr);
+
+        IERC20 token = IERC20(tokenAddress);
+        uint256 tokenBalance =token.balanceOf(address(this));
+        require(tokenBalance >0 , "no tokens");
+        token.transfer(owner(), tokenBalance);
+    }
+
+    // 提取多余的eth
+    function emergencyWithdrawETH() external onlyOwner {
+        uint256 ethBalance = address(this).balance;
+        require(ethBalance >0 , "no eth");
+        payable(owner()).transfer(ethBalance);
+    }
+
+
+    function enableTrading(bool _enabled) external onlyOwner {
+        tradingEnabled = _enabled;
+        swapEnabled = _enabled;
+
+        emit ENABLETRADINGEVENT(msg.sender,_enabled);
+    }
+  
 
 
     function _setAmmPairs(address uniswapV2Pair,bool r) internal {
@@ -181,18 +285,18 @@ contract ShiBaToken is ERC20, Ownable {
         swapAndLiquifyEnabled = _enabled;
     }
 
-    function setTaxRate(TaxRate memory _tax) external onlyOwner {
+    function setTaxRate(TaxRate calldata _tax) external onlyOwner {
         require(_tax.buyTax <= 10000 && _tax.sellTax <= 10000 && _tax.transferTax <= 10000, "Tax rates must be between 0 and 10000");
         require(_tax.buyTax + _tax.selTax + _tax.transferTax <= 10000, "total rates must less than 100000");
         tax = _tax;
     }
 
-    function setTaxAllot(TaxAllot memory _allot) external onlyOwner {
+    function setTaxAllot(TaxAllot calldata _allot) external onlyOwner {
         require(_allot.liquidity + _allot.marketing + _allot.burn == 100, "Total tax allocation must be 100");
         taxAllot = _allot;
     }
 
-    function setTradeLimit(TradeLimit memory _limit) external onlyOwner {
+    function setTradeLimit(TradeLimit calldata _limit) external onlyOwner {
         tradeLimit = _limit;
     }
 
@@ -208,5 +312,6 @@ contract ShiBaToken is ERC20, Ownable {
         return tradeLimit;
     }
 
+    receive() external payable {}
     
 }
