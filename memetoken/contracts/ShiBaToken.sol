@@ -62,6 +62,9 @@ contract ShiBaToken is ERC20, Ownable {
     //在交易中是否允许交换及添加Liquidity
     bool public swapEnabled;
 
+    //互斥
+    bool public inSwap;
+
     // 免手续费名单
     mapping(address => bool) public isExcludedFromFee;
 
@@ -83,6 +86,12 @@ contract ShiBaToken is ERC20, Ownable {
 
     //启用禁用交易
     EVENT ENABLETRADINGEVENT(address indexed add,bool enable);
+
+    modify lockInSwap {
+        inSwap = true;
+        _;
+        inSwap = false;
+    }
 
 
     constructor(address _marketingWallet,
@@ -156,7 +165,7 @@ contract ShiBaToken is ERC20, Ownable {
         _swapAndLiquify(balance);
     }
 
-    function _swapAndLiquify(uint256 amount) internal { 
+    function _swapAndLiquify(uint256 amount) internal  lockTheSwap { 
         require(amount > 0, "no token");
         // uint256 totalFee = taxRate.buyTax + taxRate.sellTax + taxRate.transferTax;
         uint256 totalAllot = taxAllot.liquidity + taxAllot.marketing + taxAllot.burn;
@@ -224,6 +233,23 @@ contract ShiBaToken is ERC20, Ownable {
         );
 
     }
+
+    function getTokenInfo() external view returns (
+        uint256 totalSupply_, 
+        uint256 circulatingSupply_,
+        uint256 balanceContract_, 
+        uint256 burnedBalance_,
+        bool tradingEnabled_, 
+        bool swapEnabled_
+        ) {
+            totalSupply_ = totalSupply();
+            balanceContract_ = balanceOf(address(this));
+            circulatingSupply_ = totalSupply_.sub(balanceContract_);
+            burnedBalance_ = balanceOf(burnAddress);
+            tradingEnabled_ = tradingEnabled;
+            swapEnabled_ = swapEnabled;
+
+    }
    //  提取合约地址中意外或错误发送的其他 ERC-20 代币。
     function emergencyWithdrawToken(address tokenAddress) external onlyOwner { 
         require(tokenAddress != addr);
@@ -239,6 +265,44 @@ contract ShiBaToken is ERC20, Ownable {
         uint256 ethBalance = address(this).balance;
         require(ethBalance >0 , "no eth");
         payable(owner()).transfer(ethBalance);
+    }
+
+    function _transfer(address sender, address recipient, uint256 amount ) internal override {
+        require(sender != address(0), "transfer from zero address");
+        require(recipient != address(0), "transfer to zero address");
+        require(!isBlacklisted[sender] && !isBlacklisted[recipient], "sender or recipient is blacklisted");
+
+        if(tradeLimit.isTradeLimit) {
+            _applyTradeLimit(sender, recipient, amount);
+        }
+
+        if (
+            swapEnabled &&
+            !inSwap&&
+            !aamPairs[sender] && // not buy
+            !isExcludedFromFee[sender] &&
+            !isExcludedFromFee[recipient] &&
+            balanceOf(address(this)) >= swapThreshold
+        ) {
+            _swapAndLiquify(swapThreshold);
+        }
+
+        bool takeFee = !inSwap;
+        if (isExcludedFromFee[sender] || isExcludedFromFee[recipient]) {
+            takeFee = false;
+        }
+        uint256 fees = 0;
+        if (takeFee) {
+            fees = _calculateTax(sender, recipient, amount);
+            if (fees > 0) {
+                super._transfer(sender, address(this), fees);
+                amount = amount.sub(fees);
+            }
+        }
+
+        super._transfer(sender, recipient, amount);
+        
+
     }
 
 
