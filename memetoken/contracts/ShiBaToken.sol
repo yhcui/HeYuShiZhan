@@ -305,6 +305,41 @@ contract ShiBaToken is ERC20, Ownable {
 
     }
 
+    function _applyTradeLimit(address sender, address recipient, uint256 amount) private { 
+        if (!isExcludedLimit[sender] && !isExcludedLimit[recipient]) {
+            require(amount < tradeLimit.maxTxAmount, "Transfer amount exceeds the maxTxAmount.");
+        }
+
+        if (!isExcludedLimit[recipient]) {
+            uint256 recipientBalance = balanceOf(recipient);
+            require(recipientBalance.add(amount) <= tradeLimit.maxWalletAmount, "Recipient balance exceeds maxWalletAmount.");
+        }
+
+        if (!isExcludedLimit[sender] && 
+            tradingLimits.minTimeBetweenTx > 0 &&
+            ammPairs[to] ) {
+            require(block.timestamp >= lastTxTime[sender] + tradingLimits.minTimeBetweenTx, "Please wait between transactions.");
+            lastTxTime[sender] = block.timestamp;
+        }
+
+    }
+
+    function _calculateTax(address sender, address recipient, uint256 amount) private view returns (uint256) {
+        uint256 taxAmount = 0;
+        if (ammPairs[sender]) {
+            // 买入
+            taxAmount = amount.mul(taxRate.buyTax).div(10000);
+        } else if (ammPairs[recipient]) {
+            // 卖出
+            taxAmount = amount.mul(taxRate.sellTax).div(10000);
+        } else {
+            // 转账
+            taxAmount = amount.mul(taxRate.transferTax).div(10000);
+        }
+        return taxAmount;
+
+    }
+
 
     function enableTrading(bool _enabled) external onlyOwner {
         tradingEnabled = _enabled;
