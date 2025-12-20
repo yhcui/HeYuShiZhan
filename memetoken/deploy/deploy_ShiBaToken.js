@@ -8,10 +8,16 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
 
     console.log("开始部署 ShiBaToken...");
 
+    // 改成需要的参数
+    const  _marketingWallet  = deployer;
+    const _liquidityWallet = deployer;
+    const  _burnAddress = deployer;
+    const  routerAddress = deployer;
+
     // 使用插件原生的 deploy 方法
     const result = await deploy("ShiBaToken", {
         from: deployer,
-        args: [deployer, deployer, deployer, deployer],
+        args: [_marketingWallet, _liquidityWallet, _burnAddress, routerAddress],
         log: true,
         waitConfirmations: 1,
     });
