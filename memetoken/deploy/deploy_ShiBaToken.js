@@ -1,40 +1,31 @@
 const fs = require("fs");
 const path = require("path");
-
 module.exports = async ({ getNamedAccounts, deployments }) => {
-    const { deploy } = deployments;
-    const { deployer } = await getNamedAccounts(); // 会自动从 config 取第一个账号
+    const { deploy, get } = deployments;
+    const { deployer, marketingWallet, liquidityWallet,user1,user2 } = await getNamedAccounts();
 
+    // 动态获取刚才部署的 Mock Router 地址
+    const MockRouter = await get("UniswapV2Router02");
+    const routerAddress = MockRouter.address;
 
-    console.log("开始部署 ShiBaToken...");
+    const MARKETING_WALLET = marketingWallet; // 确保地址完整 42 位
+    const LIQUIDITY_WALLET = liquidityWallet;
+    const BURN_ADDRESS = "0x000000000000000000000000000000000000dEaD";
 
-    // 改成需要的参数
-    const  _marketingWallet  = deployer;
-    const _liquidityWallet = deployer;
-    const  _burnAddress = deployer;
-    const  routerAddress = deployer;
+    console.log("--- 开始部署 ShiBaToken ---");
 
-    // 使用插件原生的 deploy 方法
-    const result = await deploy("ShiBaToken", {
+    await deploy("ShiBaToken", {
         from: deployer,
-        args: [_marketingWallet, _liquidityWallet, _burnAddress, routerAddress],
+        args: [
+            MARKETING_WALLET, 
+            LIQUIDITY_WALLET, 
+            BURN_ADDRESS, 
+            routerAddress
+        ],
         log: true,
-        waitConfirmations: 1,
     });
-
-    console.log(`ShibaToken 部署成功: ${result.address}`);
-
-    // 保存到你指定的缓存路径
-    const cacheDir = path.resolve(__dirname, "../.cache");
-    if (!fs.existsSync(cacheDir)) {
-        fs.mkdirSync(cacheDir, { recursive: true });
-    }
-    const storePath = path.join(cacheDir, "deployedAddresses.json");
-
-    fs.writeFileSync(storePath, JSON.stringify({
-        ShiBaToken: result.address,
-        abi: result.abi
-    }, null, 2));
 };
 
-module.exports.tags = ['deployShiBaToken'];
+// 确保在运行 ShiBaToken 部署前先运行 mocks 脚本
+module.exports.dependencies = ["mocks"]; 
+module.exports.tags = ["ShiBaToken"];

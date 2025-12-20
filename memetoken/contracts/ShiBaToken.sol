@@ -3,8 +3,10 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";    
-import "./mock/IUniswapV2Router2.sol";
+import "./mock/IUniswapV2Router02.sol";
 import "./mock/IUniswapV2Factory.sol";
+// 引入 Hardhat 的 console 包
+import "hardhat/console.sol";
 
 contract ShiBaToken is ERC20, Ownable {
 
@@ -49,7 +51,7 @@ contract ShiBaToken is ERC20, Ownable {
 
     address public burnAddress = address(0xdEaD);
 
-    IUniswapV2Router2 public uniswapV2Router;
+    IUniswapV2Router02 public uniswapV2Router;
 
     address public uniswapV2Pair;
 
@@ -106,9 +108,9 @@ contract ShiBaToken is ERC20, Ownable {
         burnAddress = _burnAddress;
 
         require(routerAddress != address(0), "router address is zero");
-
-        // uniswapV2Router = IUniswapV2Router2(routerAddress);
-        // uniswapV2Pair = IUniswapV2Factory(uniswapV2Router.factory()).createPair(address(this), uniswapV2Router.WETH());
+        console.log("Token Constructor: Router is", routerAddress);
+        uniswapV2Router = IUniswapV2Router02(routerAddress);
+        uniswapV2Pair = IUniswapV2Factory(uniswapV2Router.factory()).createPair(address(this), uniswapV2Router.WETH());
 
         _setAmmPairs(uniswapV2Pair, true);
         
@@ -269,6 +271,7 @@ contract ShiBaToken is ERC20, Ownable {
   
 
     function _update(address sender, address recipient, uint256 amount ) internal override {
+        console.log("Transfer: from %s to %s, amount %s", sender, recipient, amount);
         if (sender != address(0)) {
             require(recipient != address(0), "transfer to zero address");
             require(!isBlacklisted[sender] && !isBlacklisted[recipient], "sender or recipient is blacklisted");
