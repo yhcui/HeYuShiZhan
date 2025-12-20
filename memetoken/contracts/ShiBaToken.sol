@@ -3,19 +3,17 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";    
-import "@openzeppelin/contracts/utils/math/SafeMath.sol";
 import "./mock/IUniswapV2Router2.sol";
 import "./mock/IUniswapV2Factory.sol";
 
 contract ShiBaToken is ERC20, Ownable {
 
-    using SafeMath for uint256;
-
-    
     uint256 private constant MAX_SUPPLY = 1_000_000_000 * (10 ** 18); // 10亿代币，18位小数
 
     uint256 private constant INITIAL_SUPPLY = MAX_SUPPLY; // 10亿代币，18位小数
 
+
+    uint256 public swapThreshold;
 
     // 税费
     struct TaxRate {
@@ -82,12 +80,12 @@ contract ShiBaToken is ERC20, Ownable {
     mapping(address => bool) public isBlacklisted;
 
     //铸造
-    EVENT MINTEVENT(address indexed to, uint256 amount);
+    event MINTEVENT(address indexed to, uint256 amount);
 
     //启用禁用交易
-    EVENT ENABLETRADINGEVENT(address indexed add,bool enable);
+    event ENABLETRADINGEVENT(address indexed add,bool enable);
 
-    modify lockInSwap {
+    modifier lockInSwap {
         inSwap = true;
         _;
         inSwap = false;
@@ -107,8 +105,10 @@ contract ShiBaToken is ERC20, Ownable {
 
         burnAddress = _burnAddress;
 
-        uniswapV2Router = IUniswapV2Router02(routerAddress);
-        uniswapV2Pair = IUniswapV2Factory(uniswapV2Router.factory()).createPair(address(this), uniswapV2Router.WETH());
+        require(routerAddress != address(0), "router address is zero");
+
+        // uniswapV2Router = IUniswapV2Router2(routerAddress);
+        // uniswapV2Pair = IUniswapV2Factory(uniswapV2Router.factory()).createPair(address(this), uniswapV2Router.WETH());
 
         _setAmmPairs(uniswapV2Pair, true);
         
@@ -134,7 +134,7 @@ contract ShiBaToken is ERC20, Ownable {
             isTradeLimit: true
         });
 
-        swapThreshold = INITIAL_SUPPLY * 5 / 100000; // 0.05% 的初始供应量
+        swapThreshold = INITIAL_SUPPLY * 1 / 100000; // 0.001% 的初始供应量
 
         
         isExcludedFromFee[msg.sender] = true;
@@ -165,33 +165,33 @@ contract ShiBaToken is ERC20, Ownable {
         _swapAndLiquify(balance);
     }
 
-    function _swapAndLiquify(uint256 amount) internal  lockTheSwap { 
+    function _swapAndLiquify(uint256 amount) internal  lockInSwap { 
         require(amount > 0, "no token");
         // uint256 totalFee = taxRate.buyTax + taxRate.sellTax + taxRate.transferTax;
         uint256 totalAllot = taxAllot.liquidity + taxAllot.marketing + taxAllot.burn;
         require(totalAllot > 0, "no allot");
         // uint256 liquidityTokens = amount * taxAllot.liquidity / totalAllot / 2;
-        uint256 liquidityTokens = amount.mul(taxAllot.liquidity).div(totalAllot).div(2);
+        uint256 liquidityTokens = amount*(taxAllot.liquidity)/(totalAllot)/(2);
 
-        uint256 marketingTokens = amount.mul(taxAllot.marketing).div(totalAllot);
+        // uint256 marketingTokens = amount*(taxAllot.marketing)/(totalAllot);
 
-        uint256 burnTokens = amount.mul(taxAllot.burn).div(totalAllot);
+        uint256 burnTokens = amount*(taxAllot.burn)/(totalAllot);
 
         if (burnTokens > 0) {
             super._transfer(address(this), burnAddress, burnTokens);
         }
 
-        uint256 swapTokens = amount.sub(liquidity).sub(burnTokens)
+        uint256 swapTokens = amount - liquidityTokens - burnTokens;
 
         uint256 ethbalanceBefore = address(this).balance;
 
         _swapTokensForEth(swapTokens);
 
-        uint256 deltaBalance = address(this).balance.sub(ethbalanceBefore);
+        uint256 deltaBalance = address(this).balance-ethbalanceBefore;
 
         // eth分配给营销和流动性
-        uint256 liquidityEth = deltaBalance.mul(taxAllot.liquidity).div(totalAllot.sub(taxAllot.burn)).div(2);
-        uint256 marketingEth = deltaBalance.sub(liquidityEth);
+        uint256 liquidityEth = deltaBalance * (taxAllot.liquidity)/ (totalAllot - taxAllot.burn)/2;
+        uint256 marketingEth = deltaBalance - liquidityEth;
 
 
         if (liquidityEth > 0 && liquidityTokens > 0) {
@@ -244,7 +244,7 @@ contract ShiBaToken is ERC20, Ownable {
         ) {
             totalSupply_ = totalSupply();
             balanceContract_ = balanceOf(address(this));
-            circulatingSupply_ = totalSupply_.sub(balanceContract_);
+            circulatingSupply_ = totalSupply_ - (balanceContract_);
             burnedBalance_ = balanceOf(burnAddress);
             tradingEnabled_ = tradingEnabled;
             swapEnabled_ = swapEnabled;
@@ -252,7 +252,7 @@ contract ShiBaToken is ERC20, Ownable {
     }
    //  提取合约地址中意外或错误发送的其他 ERC-20 代币。
     function emergencyWithdrawToken(address tokenAddress) external onlyOwner { 
-        require(tokenAddress != addr);
+        require(tokenAddress != address(this));
 
         IERC20 token = IERC20(tokenAddress);
         uint256 tokenBalance =token.balanceOf(address(this));
@@ -266,41 +266,44 @@ contract ShiBaToken is ERC20, Ownable {
         require(ethBalance >0 , "no eth");
         payable(owner()).transfer(ethBalance);
     }
+  
 
-    function _transfer(address sender, address recipient, uint256 amount ) internal override {
-        require(sender != address(0), "transfer from zero address");
-        require(recipient != address(0), "transfer to zero address");
-        require(!isBlacklisted[sender] && !isBlacklisted[recipient], "sender or recipient is blacklisted");
+    function _update(address sender, address recipient, uint256 amount ) internal override {
+        if (sender != address(0)) {
+            require(recipient != address(0), "transfer to zero address");
+            require(!isBlacklisted[sender] && !isBlacklisted[recipient], "sender or recipient is blacklisted");
 
-        if(tradeLimit.isTradeLimit) {
-            _applyTradeLimit(sender, recipient, amount);
-        }
+            if(tradeLimit.isTradeLimit) {
+                _applyTradeLimit(sender, recipient, amount);
+            }
 
-        if (
-            swapEnabled &&
-            !inSwap&&
-            !aamPairs[sender] && // not buy
-            !isExcludedFromFee[sender] &&
-            !isExcludedFromFee[recipient] &&
-            balanceOf(address(this)) >= swapThreshold
-        ) {
-            _swapAndLiquify(swapThreshold);
-        }
+            if (
+                swapEnabled &&
+                !inSwap&&
+                !ammPairs[sender] && // not buy
+                !isExcludedFromFee[sender] &&
+                !isExcludedFromFee[recipient] &&
+                balanceOf(address(this)) >= swapThreshold
+            ) {
+                _swapAndLiquify(swapThreshold);
+            }
 
-        bool takeFee = !inSwap;
-        if (isExcludedFromFee[sender] || isExcludedFromFee[recipient]) {
-            takeFee = false;
-        }
-        uint256 fees = 0;
-        if (takeFee) {
-            fees = _calculateTax(sender, recipient, amount);
-            if (fees > 0) {
-                super._transfer(sender, address(this), fees);
-                amount = amount.sub(fees);
+            bool takeFee = !inSwap;
+            if (isExcludedFromFee[sender] || isExcludedFromFee[recipient]) {
+                takeFee = false;
+            }
+            uint256 fees = 0;
+            if (takeFee) {
+                fees = _calculateTax(sender, recipient, amount);
+                if (fees > 0) {
+                    super._update(sender, address(this), fees);
+                    amount = amount - fees;
+                }
             }
         }
+        
 
-        super._transfer(sender, recipient, amount);
+        super._update(sender, recipient, amount);
         
 
     }
@@ -312,13 +315,13 @@ contract ShiBaToken is ERC20, Ownable {
 
         if (!isExcludedLimit[recipient]) {
             uint256 recipientBalance = balanceOf(recipient);
-            require(recipientBalance.add(amount) <= tradeLimit.maxWalletAmount, "Recipient balance exceeds maxWalletAmount.");
+            require(recipientBalance+(amount) <= tradeLimit.maxWalletAmount, "Recipient balance exceeds maxWalletAmount.");
         }
 
         if (!isExcludedLimit[sender] && 
-            tradingLimits.minTimeBetweenTx > 0 &&
-            ammPairs[to] ) {
-            require(block.timestamp >= lastTxTime[sender] + tradingLimits.minTimeBetweenTx, "Please wait between transactions.");
+            tradeLimit.minTimeBetweenTx > 0 &&
+            ammPairs[recipient] ) {
+            require(block.timestamp >= lastTxTime[sender] + tradeLimit.minTimeBetweenTx, "Please wait between transactions.");
             lastTxTime[sender] = block.timestamp;
         }
 
@@ -328,13 +331,13 @@ contract ShiBaToken is ERC20, Ownable {
         uint256 taxAmount = 0;
         if (ammPairs[sender]) {
             // 买入
-            taxAmount = amount.mul(taxRate.buyTax).div(10000);
+            taxAmount = amount*(taxRate.buyTax)/(10000);
         } else if (ammPairs[recipient]) {
             // 卖出
-            taxAmount = amount.mul(taxRate.sellTax).div(10000);
+            taxAmount = amount*(taxRate.sellTax)/(10000);
         } else {
             // 转账
-            taxAmount = amount.mul(taxRate.transferTax).div(10000);
+            taxAmount = amount*(taxRate.transferTax)/(10000);
         }
         return taxAmount;
 
@@ -350,8 +353,8 @@ contract ShiBaToken is ERC20, Ownable {
   
 
 
-    function _setAmmPairs(address uniswapV2Pair,bool r) internal {
-        ammPairs[uniswapV2Pair] = r;
+    function _setAmmPairs(address _uniswapV2Pair,bool r) internal {
+        ammPairs[_uniswapV2Pair] = r;
     }
         
     function setMarketingWallet(address _marketingWallet) external onlyOwner {
@@ -378,16 +381,10 @@ contract ShiBaToken is ERC20, Ownable {
         isBlacklisted[account] = blacklisted;
     }
 
-    
-
-    function setSwapAndLiquifyEnabled(bool _enabled) public onlyOwner {
-        swapAndLiquifyEnabled = _enabled;
-    }
-
     function setTaxRate(TaxRate calldata _tax) external onlyOwner {
         require(_tax.buyTax <= 10000 && _tax.sellTax <= 10000 && _tax.transferTax <= 10000, "Tax rates must be between 0 and 10000");
-        require(_tax.buyTax + _tax.selTax + _tax.transferTax <= 10000, "total rates must less than 100000");
-        tax = _tax;
+        require(_tax.buyTax + _tax.sellTax + _tax.transferTax <= 10000, "total rates must less than 100000");
+        taxRate = _tax;
     }
 
     function setTaxAllot(TaxAllot calldata _allot) external onlyOwner {
@@ -400,7 +397,7 @@ contract ShiBaToken is ERC20, Ownable {
     }
 
     function getTaxRate() external view returns (TaxRate memory) {
-        return tax;
+        return taxRate;
     }
 
     function getTaxAllot() external view returns (TaxAllot memory) {

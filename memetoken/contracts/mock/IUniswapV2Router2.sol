@@ -6,8 +6,8 @@ interface IUniswapV2Router2 {
     function factory() external pure returns  (address);
 
     function WETH() external pure returns (address);
-
-    function swapExactTOkensForETHSupportingFeeOnTransferTokens(
+            
+    function swapExactTokensForETHSupportingFeeOnTransferTokens(
         uint amountIn,
         uint amountOutMin,
         address[] calldata path,// 目前固定[token,ETH]
