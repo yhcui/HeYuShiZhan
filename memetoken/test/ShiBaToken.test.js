@@ -5,9 +5,20 @@ describe("ShiBaToken 深度逻辑测试", function () {
     let token, router, weth, owner, user1, user2, marketingWallet, liquidityWallet;
     let routerAddr, pairAddr;
 
+// 在 每一个 it 测试用例运行之前都会重新执行一次
 beforeEach(async function () {
         // 1. 获取账户
         const namedAccounts = await getNamedAccounts();
+        /*
+            owner不就是deployer么？
+            注意：owner 是一个 Signer 实例，而 namedAccounts.deployer 是一个字符串
+            owner (通过 getSigner 获取)：是一个 Signer 对象 (Object)。它不仅包含地址，还包含了该账户的私钥权限。
+
+            虽然 getSigners()[0] 通常也是 deployer，但使用 namedAccounts.deployer 配合 getSigner() 有两个好处：
+                1、可读性：代码明确告诉别人，我正在获取那个被定义为“部署者”的账户。
+                2、配置灵活性：如果你在 hardhat.config.js 中修改了不同网络的 deployer 顺序，namedAccounts 会自动帮你追踪正确的地址，而 [0] 可能会拿错。
+
+        */
         owner = await ethers.getSigner(namedAccounts.deployer);
         marketingWallet = namedAccounts.marketingWallet;
         liquidityWallet = namedAccounts.liquidityWallet;
@@ -18,6 +29,12 @@ beforeEach(async function () {
 
         // 2. 部署环境
         // 确保部署顺序：先跑 mocks，再跑 ShiBaToken
+        /*
+            deployments.fixture:
+            快照回滚：它并不是真的每次都重新跑一遍部署脚本（那太慢了）。
+            内存加速：Hardhat 会在第一次部署后创建一个“快照”。
+            瞬间重置：每次 beforeEach 调用时，它只是把区块链状态回滚到那个快照点。
+        */
         await deployments.fixture(["mocks", "ShiBaToken"]);
         
         // 3. 获取 Token 实例
@@ -37,6 +54,13 @@ beforeEach(async function () {
 
         // 5. 【诊断加固】验证 WETH 状态
         const wethAddr = await router.WETH();
+        // 检查指定的区块链地址上，是否真的存在合约代码。
+        /*
+            ethers.provider.getCode(address) 会返回该地址存储的 十六进制字节码 (Bytecode)：
+            如果返回 0x：说明这是一个空地址（或者是普通钱包地址）。
+            如果返回一长串十六进制（如 0x60806040...）：说明这是一个合约地址。
+            wethCode : 一段编译后的 EVM 指令集
+        */
         const wethCode = await ethers.provider.getCode(wethAddr);
         if (wethCode === "0x") {
              console.error("CRITICAL ERROR: WETH address", wethAddr, "is empty!");
@@ -44,6 +68,15 @@ beforeEach(async function () {
         }
 
         // 6. 确保实例连接了 owner，以便后续进行 approve 和 addLiquidity 调用
+        /* 
+            connect: 身份切换”或“绑定”操作。它决定了“谁”在和合约说话，或者说“谁”**在支付这笔交易的 Gas。
+            connect 的两个关键特性
+            不可变性（Immutability）： token.connect(owner) 不会改变 原来的 token 对象，而是返回一个 全新的 合约实例。 
+            这就是为什么你通常看到代码写成：token = token.connect(owner);（将原变量指向新实例）。
+
+            权限分配： 当你执行 router = router.connect(owner) 后，后续调用的 router.addLiquidityETH 内部的 msg.sender 就会变成 owner 的地址。
+
+        */
         token = token.connect(owner);
         router = router.connect(owner);
 

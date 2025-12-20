@@ -27,5 +27,7 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
 };
 
 // 确保在运行 ShiBaToken 部署前先运行 mocks 脚本
+//module.exports.dependencies 的作用就是强制定义执行顺序
+//执行ShiBaToken时会先运行dependencies 
 module.exports.dependencies = ["mocks"]; 
 module.exports.tags = ["ShiBaToken"];
