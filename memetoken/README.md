@@ -42,6 +42,8 @@ npx hardhat deploy --tags ShiBaToken --network localhost
 4、验证 npx hardhat run test/verify-logic.js --network localhost  
 
 ## 内存测试
+npx hardhat clean
+npx hardhat compile
 npx hardhat test test/ShiBaToken.test.js
 
 ## 启动节点整体测试

@@ -55,7 +55,6 @@ contract MockRouter {
         // 注意：为了测试通过，Mock 并不真的去 Pair 换钱，而是模拟这个过程
         address token = path[0];
         SafeERC20Transfer(token, msg.sender, address(this), amountIn);
-        payable(to).transfer(address(this).balance);
         // 模拟换出的 ETH（实际开发中建议手动给 MockRouter 转一点 ETH 备用）
         payable(to).transfer(address(this).balance > 0 ? address(this).balance : 0);
     }
