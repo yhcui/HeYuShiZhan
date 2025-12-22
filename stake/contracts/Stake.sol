@@ -28,11 +28,13 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
     uint256 public minDeposit = 2000*10**18;
 
-    bool public  notDepositsEnabled ;
+    bool public  depositsEnabled ;
 
-    bool public  notUnstakeEnabled ;
+    bool public  unstakeEnabled ;
 
-    bool public  notClaimRewardsEnabled;
+    bool public  claimRewardsEnabled;
+
+    bool public withdrawEnabled;
 
     struct Pool {
 
@@ -73,6 +75,12 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
     // pool id => user address => user info
     mapping(address => mapping(uint256 => UserInfo)) public userInfo;
 
+
+    //
+    modifier checkPid(uint256  _pid) {
+        require(_pid < poolList.length, "Invalid pool id");
+        _;
+    }
     event AddPool(address indexed setStakeTokenAddress, uint256 indexed poolWeight,uint256 lastRewardBlock, uint256 stTokenAmount, uint256 minDepositAmount, uint256 unstakeLockedBlocks);
 
     function initialize(
@@ -96,13 +104,38 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
         endBlock = _endBlock;
         metaNodePerBlock = _metaNodePerBlock;
 
+        depositsEnabled = true;
+        unstakeEnabled = true;
+        claimRewardsEnabled = true;
+        withdrawEnabled = true;
+    }
+
+    function setDepositsEnabled(bool _enabled) public onlyRole(ADMIN_ROLE) {
+        depositsEnabled = _enabled;
+    }
+     function setUnstakeEnabled(bool _enabled) public onlyRole(ADMIN_ROLE) {
+        unstakeEnabled = _enabled;
+    }
+     function setClaimRewardsEnabled(bool _enabled) public onlyRole(ADMIN_ROLE) {
+        claimRewardsEnabled = _enabled;
     }
 
     function setStakeTokenAddress(IERC20 _stakeTokenAddress) public onlyRole(ADMIN_ROLE) {
         stakeTokenAddress = _stakeTokenAddress;
     }
 
-    function deposit(uint256 _pid, uint256 _amount) public  {
+    function depositETH() public payable {
+        require(depositsEnabled , "Deposits are disabled");
+        pool storage pool_ = poolList[0];
+        require(pool_.stTokenAddress == address(0x0), "ETH deposit not supported");
+        uint256 _amount =  msg.value;
+        require(_amount >= pool_.minDepositAmount, "Deposit amount is less than minimum required");
+        _deposit(_pid, _amount);
+    }
+
+
+    function deposit(uint256 _pid, uint256 _amount) public  checkPid(_pid) {
+        require(depositsEnabled , "Deposits are disabled");
 
         require(block.number >= startBlock, "Stake period has not started");
 
@@ -141,7 +174,8 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
     }
 
 
-    function unstake(uint256 _pid, uint256 _amount ) public  {
+    function unstake(uint256 _pid, uint256 _amount ) public checkPid(_pid) {
+        require(unstakeEnabled, "Unstaking is disabled");
         pool memory pool_ = pools[_pid];
         user memory user_ = users[msg.sender][_pid];
         require(user_.stAmount >= _amount, "Not enough staked");
@@ -164,7 +198,9 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
     }
 
-    function withdraw(uint256 _pid) public  {
+    function withdraw(uint256 _pid) public checkPid(_pid) {
+
+        require(withdrawEnabled, "Withdraw is disabled");
         Pool storage pool_ = poolList[_pid];
         UserInfo storage user_ = userInfo[_pid][msg.sender];
 
@@ -197,8 +233,8 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
     }
 
-    function claimRewards(uint256 _pid) public  {
-
+    function claimRewards(uint256 _pid) public checkPid(_pid) {
+        require(claimRewardsEnabled, "Claiming rewards is disabled");
         PoolInfo storage pool_ = poolInfo[_pid];
         UserInfo storage user_ = userInfo[_pid][msg.sender];
         updatePool(_pid);
@@ -220,7 +256,7 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
         uint256 _minDepositAmount,
         uint256 _unstakeLockedBlocks,
         bool _withUpdate
-    ) public  {
+    ) public  onlyRole(ADMIN_ROLE) {
         if (poolList.length == 0) {
             require(_stTokenAddress ==address(0x0), "First pool must be for native token");
         } else {
@@ -269,7 +305,7 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
         }
     }
 
-    function updatePool(uint256 _pid) public  {
+    function updatePool(uint256 _pid) public  onlyRole(ADMIN_ROLE) checkPid(_pid) {
         PoolInfo storage pool_ = poolList[_pid];
 
         if (pool_.lastRewardBlock >= block.number) {
