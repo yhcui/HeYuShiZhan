@@ -19,6 +19,8 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
     uint256 public metaNodePerBlock;
 
+    uint256 public totalPoolWeight;
+
 
     byte32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 
@@ -68,6 +70,11 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
     }
 
+    // pool id => user address => user info
+    mapping(address => mapping(uint256 => UserInfo)) public userInfo;
+
+    event AddPool(address indexed setStakeTokenAddress, uint256 indexed poolWeight,uint256 lastRewardBlock, uint256 stTokenAmount, uint256 minDepositAmount, uint256 unstakeLockedBlocks);
+
     function initialize(
         IERC20 _stakeTokenAddress,
         uint256 _startBlock,
@@ -97,14 +104,111 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
     function deposit(uint256 _pid, uint256 _amount) public  {
 
-        require(_amount >= minDeposit, "Deposit amount is less than minimum required");
+        require(block.number >= startBlock, "Stake period has not started");
+
+        require(_pid != 0, "deposit not support ETH");
+
+        Pool storage pool_ = poolList[_pid];
+
+        require(_amount >= pool_.minDepositAmount, "Deposit amount is less than minimum required");
+
+        if (_amount > 0) { 
+            IERC20(pool_.stTokenAddress).transferFrom(msg.sender, address(this), _amount);
+        }
+        _deposit(_pid, _amount);
     }
 
+    function _deposit(uint256 _pid, uint256 _amount) internal { 
+        Pool storage pool_ = poolList[_pid];
+        UserInfo storage user_ = userInfo[_pid][msg.sender];
+        updatePool(_pid);
+        if (user_.stAmount > 0) {
+            uint256 pending = user_.stAmount * pool_.accStTokenPerShare / (1 ether)) - user_.finishedMetaNode;
+            if (pending > 0) {
+                user_.pendingMetaNode += pending;
+            }
+        }
+        if (_amount > 0) {
+            user_.stAmount += _amount;
+            user.requests.push(Request({
+                amount: _amount,
+                requestBlock: block.number + pool_.unstakeLockedBlocks
+            }));
+        }
+        
+
+        user_.finishedMetaNode = user_.stAmount * pool_.accStTokenPerShare / (1 ether));
+    }
+
+
     function unstake(uint256 _pid, uint256 _amount ) public  {
+        pool memory pool_ = pools[_pid];
+        user memory user_ = users[msg.sender][_pid];
+        require(user_.stAmount >= _amount, "Not enough staked");
+        updatePool(_pid);
+        uint256 pending = user_.stAmount * pool_.accStTokenPerShare / (1 ether)) - user_.finishedMetaNode;
+        if (pending > 0) {
+            user_.pendingMetaNode += pending;
+        }
+
+        if (_amount > 0) {
+            user_.stAmount -= _amount;
+            pool_.stTokenAmount -= _amount;
+            user.requests.push(Request({
+                amount: _amount,
+                requestBlock: block.number + pool_.unstakeLockedBlocks
+            }));
+        }
+
+        user.finishedMetaNode = user_.stAmount * pool_.accStTokenPerShare / (1 ether)
+
+    }
+
+    function withdraw(uint256 _pid) public  {
+        Pool storage pool_ = poolList[_pid];
+        UserInfo storage user_ = userInfo[_pid][msg.sender];
+
+        uint256 pendingWithdraw_ ;
+        uint256 popNum_ ;
+        for (uint256 i = 0; i < user_.requests.length; i++) {
+            Request storage request_ = user_.requests[i];
+            if (request_.requestBlock > block.number) {
+                break;
+            }
+            pendingWithdraw_ += request_.amount;
+            popNum_ ++;
+        }
+
+        for (uint256 i = 0; i < user_.requests.length - popNum_; i++) {
+            user_.requests[i] = user_.requests[i + popNum_];
+        }
+        for (uint256 i = 0; i < popNum_; i++) {
+            user_.requests.pop();
+        }
+
+        if (pendingWithdraw_ > 0) {
+            if (pool_.stTokenAddress == address(0x0)) {
+                payable(msg.sender).transfer(pendingWithdraw_);
+            } else {
+                IERC20(pool_.stTokenAddress).safeTransfer(msg.sender, pendingWithdraw_);
+            }
+
+        }
 
     }
 
     function claimRewards(uint256 _pid) public  {
+
+        PoolInfo storage pool_ = poolInfo[_pid];
+        UserInfo storage user_ = userInfo[_pid][msg.sender];
+        updatePool(_pid);
+        uint256 pending = user_.stAmount * pool_.accStTokenPerShare / (1 ether)) - user_.finishedMetaNode + user_.pendingMetaNode;
+        if (pending > 0) {
+            user_.pendingMetaNode = 0;
+            IERC20(metaNodeTokenAddress).safeTransfer(msg.sender, pending);
+        }
+
+        user_.finishedMetaNode = user_.stAmount * pool_.accStTokenPerShare / (1 ether));
 
     }
 
@@ -112,12 +216,26 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
     function addPool(
         address _stTokenAddress,
         uint256 _poolWeight,
-        uint256 _lastRewardBlock,
         uint256 _stTokenAmount,
-        uint256 minDepositAmount,
-        uint256 _unstakeLockedBlocks
+        uint256 _minDepositAmount,
+        uint256 _unstakeLockedBlocks,
+        bool _withUpdate
     ) public  {
+        if (poolList.length == 0) {
+            require(_stTokenAddress ==address(0x0), "First pool must be for native token");
+        } else {
+            require(_stTokenAddress != address(0x0), "Pool must be for native token");
+        }
+        
+        require(_poolWeight > 0, "Pool weight must be greater than zero");
+        require(_stTokenAmount >0 , "Staked token amount must be greater than zero");
+        require(_unstakeLockedBlocks > 0, "Unstake locked blocks must be greater than zero");
+        if (_withUpdate) {
+            massUpdatePool();
+        }
+        uint256 _lastRewardBlock  = block.number > startBlock ? block.number : startBlock;
 
+        totalPoolWeight += _poolWeight;
         Pool memory pool = Pool({
             stTokenAddress: _stTokenAddress,
             poolWeight: _poolWeight,
@@ -129,9 +247,62 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
         poolList.push(pool);
 
-    }
-
-    function updatePool(uint256 _pid, bool _withUpdate) public  {
+        emit AddPool(_pid, _stTokenAddress, _poolWeight, _stTokenAmount, _unstakeLockedBlocks);
 
     }
+
+    function updatePool(uint256 _pid, 
+        uint256 _minDepositAmount,
+        uint256 _unstakeLockedBlocks
+    ) public  {
+        Pool storage pool_ = poolList[_pid];
+
+        pool_.minDepositAmount = _minDepositAmount;
+        pool_.unstakeLockedBlocks = _unstakeLockedBlocks;
+
+    }
+
+    function massUpdatePool() public  {
+        uint256 length = poolList.length;
+        for (uint i = 0 ; i < length; i++) {
+            updatePool(i);
+        }
+    }
+
+    function updatePool(uint256 _pid) public  {
+        PoolInfo storage pool_ = poolList[_pid];
+
+        if (pool_.lastRewardBlock >= block.number) {
+            return;
+        }
+        uint256 totalMetaNode  = getMultiplier(pool_.lastRewardBlock, block.number);
+
+        totalMetaNode =  totalMetaNode * pool_.poolWeight / totalPoolWeight;
+
+        uint256 stSupply = pool_.stTokenAmount;
+        if (stSupply > 0) {
+            pool_.accStTokenPerShare = pool_.accStTokenPerShare + totalMetaNode * (1 ether)) / stSupply;
+        }
+
+        pool_.lastRewardBlock = block.number;
+
+    }
+
+    function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256 multiplier) {
+        require(_to > _from, "invalid block);
+        if (_form < startBlock ) {
+            _form = startBlock;
+        }
+        if (_to > endBlock) {
+            _to = endBlock;
+        }
+
+        bool success;
+
+        (success, multiplier) =  (_to - _from) * metaNodePerBlock;
+        require(success, "overflow");
+    }
+
+
+
 }
