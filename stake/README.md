@@ -9,4 +9,8 @@ npx hardhat deploy --tags StakeToken --network localhost
 
 # SEPOLIA 测试环境
 
-npx hardhat deploy --tags StakeToken --network localhost
+npx hardhat deploy --tags StakeToken --network sepolia
+
+# 手动验证合约
+
+npx hardhat verify --network sepolia  0x883659A7c24581fbDbC014BA76646124a37A34F8

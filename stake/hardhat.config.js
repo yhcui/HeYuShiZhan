@@ -22,7 +22,10 @@ module.exports = {
   etherscan: {
     apiKey: ETHERSCAN_API_KEY,
   },
-
+  // 关闭 Sourcify 提示，减少日志干扰
+  sourcify: {
+    enabled: false
+  },
   namedAccounts: {
     deployer: {
       default: 0,
