@@ -15,6 +15,7 @@
     "@openzeppelin/contracts": "^5.4.0",
     "@openzeppelin/contracts-upgradeable": "^5.4.0",
     "@openzeppelin/hardhat-upgrades": "^3.9.1",
+    "dotenv": "^17.2.3",
     "hardhat": "^2.26.0",
     "hardhat-deploy": "^1.0.4"
   }

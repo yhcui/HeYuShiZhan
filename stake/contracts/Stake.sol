@@ -4,14 +4,15 @@ pragma solidity ^0.8.28;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
-import "openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol"
-import "openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
-import "openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-import "openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
-import "openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/utils/PausableUpgradeable.sol";
 
 contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUpgradeable,AccessControlUpgradeable {
 
+    using SafeERC20 for IERC20;
 
     uint256 public startBlock;
 
@@ -22,7 +23,7 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
     uint256 public totalPoolWeight;
 
 
-    byte32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
 
     bytes32 public constant UPGRADER_ROLE = keccak256("UPGRADER_ROLE");
 
@@ -35,6 +36,10 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
     bool public  claimRewardsEnabled;
 
     bool public withdrawEnabled;
+
+    IERC20 public stakeTokenAddress;
+
+    uint256 public constant ETH_PID = 0;
 
     struct Pool {
 
@@ -49,6 +54,8 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
         uint256 minDepositAmount; // 最小质押数量
 
         uint256 unstakeLockedBlocks; // 解质押锁定区块数
+
+        uint256 accStTokenPerShare;
     }
     Pool[] public poolList;
 
@@ -73,15 +80,18 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
     }
 
     // pool id => user address => user info
-    mapping(address => mapping(uint256 => UserInfo)) public userInfo;
-
+    mapping(uint256 => mapping(address => User)) public userInfo;
 
     //
     modifier checkPid(uint256  _pid) {
         require(_pid < poolList.length, "Invalid pool id");
         _;
     }
-    event AddPool(address indexed setStakeTokenAddress, uint256 indexed poolWeight,uint256 lastRewardBlock, uint256 stTokenAmount, uint256 minDepositAmount, uint256 unstakeLockedBlocks);
+    event AddPool(address indexed setStakeTokenAddress, 
+        uint256 indexed poolWeight,
+        uint256 lastRewardBlock, 
+        uint256 minDepositAmount, 
+        uint256 unstakeLockedBlocks);
 
     function initialize(
         IERC20 _stakeTokenAddress,
@@ -92,7 +102,7 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
         require(_startBlock < _endBlock && _metaNodePerBlock > 0 , "invalid parameters");
 
-        __Ownable_init();
+        // __Ownable_init();
         __UUPSUpgradeable_init();
         __Pausable_init();
         __AccessControl_init();
@@ -126,11 +136,11 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
     function depositETH() public payable {
         require(depositsEnabled , "Deposits are disabled");
-        pool storage pool_ = poolList[0];
+        Pool storage pool_ = poolList[0];
         require(pool_.stTokenAddress == address(0x0), "ETH deposit not supported");
         uint256 _amount =  msg.value;
         require(_amount >= pool_.minDepositAmount, "Deposit amount is less than minimum required");
-        _deposit(_pid, _amount);
+        _deposit(ETH_PID, _amount);
     }
 
 
@@ -153,34 +163,34 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
     function _deposit(uint256 _pid, uint256 _amount) internal { 
         Pool storage pool_ = poolList[_pid];
-        UserInfo storage user_ = userInfo[_pid][msg.sender];
+        User storage user_ = userInfo[_pid][msg.sender];
         updatePool(_pid);
         if (user_.stAmount > 0) {
-            uint256 pending = user_.stAmount * pool_.accStTokenPerShare / (1 ether)) - user_.finishedMetaNode;
+            uint256 pending = user_.stAmount * pool_.accStTokenPerShare / (1 ether) - user_.finishedMetaNode;
             if (pending > 0) {
                 user_.pendingMetaNode += pending;
             }
         }
         if (_amount > 0) {
             user_.stAmount += _amount;
-            user.requests.push(Request({
+            user_.requests.push(Request({
                 amount: _amount,
                 requestBlock: block.number + pool_.unstakeLockedBlocks
             }));
         }
         
 
-        user_.finishedMetaNode = user_.stAmount * pool_.accStTokenPerShare / (1 ether));
+        user_.finishedMetaNode = user_.stAmount * pool_.accStTokenPerShare / (1 ether);
     }
 
 
     function unstake(uint256 _pid, uint256 _amount ) public checkPid(_pid) {
         require(unstakeEnabled, "Unstaking is disabled");
-        pool memory pool_ = pools[_pid];
-        user memory user_ = users[msg.sender][_pid];
+        Pool memory pool_ = poolList[_pid];
+        User storage user_ = userInfo[_pid][msg.sender];
         require(user_.stAmount >= _amount, "Not enough staked");
         updatePool(_pid);
-        uint256 pending = user_.stAmount * pool_.accStTokenPerShare / (1 ether)) - user_.finishedMetaNode;
+        uint256 pending = user_.stAmount * pool_.accStTokenPerShare / (1 ether) - user_.finishedMetaNode;
         if (pending > 0) {
             user_.pendingMetaNode += pending;
         }
@@ -188,13 +198,13 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
         if (_amount > 0) {
             user_.stAmount -= _amount;
             pool_.stTokenAmount -= _amount;
-            user.requests.push(Request({
+            user_.requests.push(Request({
                 amount: _amount,
                 requestBlock: block.number + pool_.unstakeLockedBlocks
             }));
         }
 
-        user.finishedMetaNode = user_.stAmount * pool_.accStTokenPerShare / (1 ether)
+        user_.finishedMetaNode = user_.stAmount * pool_.accStTokenPerShare / (1 ether);
 
     }
 
@@ -202,7 +212,7 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
         require(withdrawEnabled, "Withdraw is disabled");
         Pool storage pool_ = poolList[_pid];
-        UserInfo storage user_ = userInfo[_pid][msg.sender];
+        User storage user_ = userInfo[_pid][msg.sender];
 
         uint256 pendingWithdraw_ ;
         uint256 popNum_ ;
@@ -224,9 +234,10 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
         if (pendingWithdraw_ > 0) {
             if (pool_.stTokenAddress == address(0x0)) {
-                payable(msg.sender).transfer(pendingWithdraw_);
+                // payable(msg.sender).transfer(pendingWithdraw_);
+                _safeETHTransfer(msg.sender, pendingWithdraw_);
             } else {
-                IERC20(pool_.stTokenAddress).safeTransfer(msg.sender, pendingWithdraw_);
+                IERC20(pool_.stTokenAddress).transfer(msg.sender, pendingWithdraw_);
             }
 
         }
@@ -235,16 +246,16 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
     function claimRewards(uint256 _pid) public checkPid(_pid) {
         require(claimRewardsEnabled, "Claiming rewards is disabled");
-        PoolInfo storage pool_ = poolInfo[_pid];
-        UserInfo storage user_ = userInfo[_pid][msg.sender];
+        Pool storage pool_ = poolList[_pid];
+        User storage user_ = userInfo[_pid][msg.sender];
         updatePool(_pid);
-        uint256 pending = user_.stAmount * pool_.accStTokenPerShare / (1 ether)) - user_.finishedMetaNode + user_.pendingMetaNode;
+        uint256 pending = user_.stAmount * pool_.accStTokenPerShare / (1 ether) - user_.finishedMetaNode + user_.pendingMetaNode;
         if (pending > 0) {
             user_.pendingMetaNode = 0;
-            IERC20(metaNodeTokenAddress).safeTransfer(msg.sender, pending);
+            IERC20(stakeTokenAddress).safeTransfer(msg.sender, pending);
         }
 
-        user_.finishedMetaNode = user_.stAmount * pool_.accStTokenPerShare / (1 ether));
+        user_.finishedMetaNode = user_.stAmount * pool_.accStTokenPerShare / (1 ether);
 
     }
 
@@ -252,7 +263,6 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
     function addPool(
         address _stTokenAddress,
         uint256 _poolWeight,
-        uint256 _stTokenAmount,
         uint256 _minDepositAmount,
         uint256 _unstakeLockedBlocks,
         bool _withUpdate
@@ -264,7 +274,6 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
         }
         
         require(_poolWeight > 0, "Pool weight must be greater than zero");
-        require(_stTokenAmount >0 , "Staked token amount must be greater than zero");
         require(_unstakeLockedBlocks > 0, "Unstake locked blocks must be greater than zero");
         if (_withUpdate) {
             massUpdatePool();
@@ -276,14 +285,15 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
             stTokenAddress: _stTokenAddress,
             poolWeight: _poolWeight,
             lastRewardBlock: _lastRewardBlock,
-            stTokenAmount: _stTokenAmount,
-            minDepositAmount: minDepositAmount,
-            unstakeLockedBlocks: _unstakeLockedBlocks
+            stTokenAmount: 0,
+            minDepositAmount: _minDepositAmount,
+            unstakeLockedBlocks: _unstakeLockedBlocks,
+            accStTokenPerShare: 0
         });
 
         poolList.push(pool);
 
-        emit AddPool(_pid, _stTokenAddress, _poolWeight, _stTokenAmount, _unstakeLockedBlocks);
+        emit AddPool(_stTokenAddress, _poolWeight, _lastRewardBlock , _minDepositAmount, _unstakeLockedBlocks);
 
     }
 
@@ -306,7 +316,7 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
     }
 
     function updatePool(uint256 _pid) public  onlyRole(ADMIN_ROLE) checkPid(_pid) {
-        PoolInfo storage pool_ = poolList[_pid];
+        Pool storage pool_ = poolList[_pid];
 
         if (pool_.lastRewardBlock >= block.number) {
             return;
@@ -317,7 +327,7 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
         uint256 stSupply = pool_.stTokenAmount;
         if (stSupply > 0) {
-            pool_.accStTokenPerShare = pool_.accStTokenPerShare + totalMetaNode * (1 ether)) / stSupply;
+            pool_.accStTokenPerShare = pool_.accStTokenPerShare + totalMetaNode * (1 ether) / stSupply;
         }
 
         pool_.lastRewardBlock = block.number;
@@ -325,20 +335,28 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
     }
 
     function getMultiplier(uint256 _from, uint256 _to) public view returns (uint256 multiplier) {
-        require(_to > _from, "invalid block);
-        if (_form < startBlock ) {
-            _form = startBlock;
+        require(_to > _from, "invalid block");
+        if (_from < startBlock ) {
+            _from = startBlock;
         }
         if (_to > endBlock) {
             _to = endBlock;
         }
 
-        bool success;
-
-        (success, multiplier) =  (_to - _from) * metaNodePerBlock;
-        require(success, "overflow");
+        multiplier =  (_to - _from) * metaNodePerBlock;
     }
 
+    function _safeETHTransfer(address _to, uint256 _amount) internal {
+        (bool success, bytes memory data) = address(_to).call{value: _amount}("");
+        require(success, "ETH transfer call failed");
+        if (data.length > 0) {
+            require(abi.decode(data,(bool)), "ETH transfer operation did not succeed");
 
+        }
+    }
+
+    function _authorizeUpgrade( address newImplementation) internal override onlyRole(UPGRADER_ROLE) {
+
+    }
 
 }
