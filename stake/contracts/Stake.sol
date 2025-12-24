@@ -106,9 +106,10 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
         __UUPSUpgradeable_init();
         __Pausable_init();
         __AccessControl_init();
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender); // 赋予自己最高管理员权限
+        _grantRole(ADMIN_ROLE, msg.sender);
+        _grantRole(UPGRADER_ROLE, msg.sender);
 
-        grantRole(ADMIN_ROLE, msg.sender);
-        grantRole(UPGRADER_ROLE, msg.sender);
         setStakeTokenAddress(_stakeTokenAddress);
         startBlock = _startBlock;
         endBlock = _endBlock;
