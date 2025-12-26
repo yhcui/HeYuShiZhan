@@ -174,6 +174,7 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
         }
         if (_amount > 0) {
             user_.stAmount += _amount;
+            pool_.stTokenAmount += _amount; // 【新增这一行！！】更新矿池总质押量
             user_.requests.push(Request({
                 amount: _amount,
                 requestBlock: block.number + pool_.unstakeLockedBlocks
@@ -316,7 +317,7 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
         }
     }
 
-    function updatePool(uint256 _pid) public  onlyRole(ADMIN_ROLE) checkPid(_pid) {
+    function updatePool(uint256 _pid) internal checkPid(_pid) {
         Pool storage pool_ = poolList[_pid];
 
         if (pool_.lastRewardBlock >= block.number) {

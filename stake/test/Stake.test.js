@@ -8,7 +8,7 @@ describe("Stake Contract", function () {
 
     beforeEach(async () => {
         // 重新部署所有带有标签的合约
-        await deployments.fixture(["staketoken", "stake"]);
+        await deployments.fixture(["StakeToken", "stake"]);
         
         const namedAccounts = await getNamedAccounts();
         deployer = namedAccounts.deployer;
@@ -25,6 +25,11 @@ describe("Stake Contract", function () {
         // 给 user1 转一些代币用于质押测试
         const deployerSigner = await ethers.getSigner(deployer);
         await stakeToken.connect(deployerSigner).transfer(user1.address, STK_AMOUNT);
+
+        // 在 beforeEach 结尾处
+        // 给 Stake 合约转入 100万个代币作为奖励池储备
+        const rewardAmount = ethers.parseEther("1000000");
+        await stakeToken.connect(deployerSigner).transfer(await stake.getAddress(), rewardAmount);
     });
 
     it("应该成功添加一个 ERC20 质押池", async () => {
@@ -43,6 +48,8 @@ describe("Stake Contract", function () {
         await stake.addPool(ethers.ZeroAddress, 100, 0, 10, true); // PID 0
         await stake.addPool(await stakeToken.getAddress(), 100, 0, 10, true); // PID 1
         
+        // 3. 模拟区块经过
+        await mine(11);
         // 2. 用户授权并质押
         const depositAmount = ethers.parseEther("1000");
         await stakeToken.connect(user1).approve(await stake.getAddress(), depositAmount);
@@ -64,7 +71,8 @@ describe("Stake Contract", function () {
         const lockBlocks = 20;
         await stake.addPool(ethers.ZeroAddress, 100, 0, 10, true);
         await stake.addPool(await stakeToken.getAddress(), 100, 0, lockBlocks, true);
-
+    // 【关键修复】：这里也需要等待质押开始
+        await mine(11);
         const amount = ethers.parseEther("500");
         await stakeToken.connect(user1).approve(await stake.getAddress(), amount);
         await stake.connect(user1).deposit(1, amount);

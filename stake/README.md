@@ -23,6 +23,7 @@ npm install --save-dev @openzeppelin/hardhat-upgrades
 npx hardhat compile
 
 # 测试
+npx hardhat node
 npx hardhat test test/Stake.test.js --network localhost  -- 用这个
 
 npx hardhat run test/Stake.test.js --network localhost   -- 不用这个
