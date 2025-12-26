@@ -361,4 +361,8 @@ contract Stake is Initializable, OwnableUpgradeable, UUPSUpgradeable, PausableUp
 
     }
 
+    function upgradeTo(address newImplementation) public {
+        upgradeToAndCall(newImplementation, "");
+    }
+
 }
